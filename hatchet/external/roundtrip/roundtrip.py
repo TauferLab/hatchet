@@ -1,6 +1,7 @@
 from __future__ import print_function
 from IPython.core.magic import Magics, magics_class, line_magic
 from IPython.display import HTML, Javascript, display
+import os
 
 """
    File: roundtrip.py
@@ -12,10 +13,21 @@ from IPython.display import HTML, Javascript, display
 
 @magics_class
 class Roundtrip(Magics):
+    
 
     # Note to self: Custom magic classes MUST call parent's constructor
     def __init__(self, shell):
         super(Roundtrip, self).__init__(shell)
+        global VIS_TO_FILE, DATA_TO_VALIDATION
+
+        VIS_TO_FILE = {
+            "literal_tree": "roundtripTree.js",
+            "boxplot": "boxplot.js"
+        }
+        DATA_TO_VALIDATION = {
+            "literal_tree": self._validate_literal_tree,
+            "boxplot": self._validate_boxplot
+        }
         self.id_number = 0
         # Clean up namespace function
         display(
@@ -33,26 +45,32 @@ class Roundtrip(Magics):
     }
     codeMap = {}
 
-    @line_magic
-    def loadVisualization(self, line):
-        # Get command line args for loading the vis
-        args = line.split(" ")
-        name = "roundtripTreeVis" + str(self.id_number)
-        path = ""
-        if '"' in args[0]:
-            path = args[0].replace('"', "")
-        elif "'" in args[0]:
-            path = args[0].replace("'", "")
+    def cleanLineArgument(self, arg):
+        if '"' in arg:
+            return arg.replace('"', "")
+        elif "'" in arg:
+            return arg.replace("'", "")
         else:
             # Path is a variable from the nb namespace
-            path = self.shell.user_ns[args[0]]
+            return self.shell.user_ns[arg]
+        
+    @line_magic
+    def loadVisualization(self, line):
+        # Get command line args for loading the vis.
+        args = line.split(" ")
+        # Clean up the input arguments.
+        path = self.cleanLineArgument(args[0])
+        visType = self.cleanLineArgument(args[1])
+        data = self.shell.user_ns[args[2]]
 
-        fileAndPath = ""
-        if path[-1] == "/":
-            fileAndPath = path + "roundtripTree.js"
-        else:
-            fileAndPath = path + "/roundtripTree.js"
+        if visType not in VIS_TO_FILE.keys():
+            assert(f"Invalid visualization type provided. Valid types include {''.join(VIS_TO_FILE.keys())}")
 
+        # Set a name to visualization cell.
+        name = "roundtripTreeVis" + str(self.id_number)
+    
+        # Read the appropriate JS file.
+        fileAndPath = os.path.join(path, VIS_TO_FILE[visType])
         javascriptFile = open(fileAndPath).read()
 
         # Source input files
@@ -61,11 +79,26 @@ class Roundtrip(Magics):
 
         displayObj = display(HTML(argList), display_id=True)
 
-        args[1] = self.shell.user_ns[args[1]]
-        displayObj.update(Javascript('argList.push("' + str(args[1]) + '")'))
+        displayObj.update(Javascript('argList.push("' + str(path) + '")'))
+        displayObj.update(Javascript('argList.push("' + str(visType) + '")'))
+        displayObj.update(Javascript('argList.push("' + str(data) + '")'))
 
+        DATA_TO_VALIDATION[visType](data)
+
+        # Get curent cell id.
+        self.codeMap[name] = javascriptFile
+
+        preRun = """
+        // Grab current context
+        elementTop = element.get(0);"""
+        displayObj.update(Javascript(preRun))
+
+        self.runVis(name, javascriptFile)
+        self.id_number += 1
+
+    def _validate_literal_tree(self, data):
         # Check that users provided a tree literal
-        if not isinstance(args[1], list):
+        if not isinstance(data, list):
             print(
                 """The argument is not a tree literal or it is not a valid Python list. Please check that you have provided a list of nodes and nested children of the following form to loadVisualization:
                     literal_tree = [{
@@ -82,16 +115,8 @@ class Roundtrip(Magics):
             )
             raise Exception("Bad argument")
 
-        # Get curent cell id
-        self.codeMap[name] = javascriptFile
-
-        preRun = """
-        // Grab current context
-        elementTop = element.get(0);"""
-        displayObj.update(Javascript(preRun))
-
-        self.runVis(name, javascriptFile)
-        self.id_number += 1
+    def _validate_boxplot(self, data):
+        pass
 
     def runVis(self, name, javascriptFile):
         name = "roundtripTreeVis" + str(self.id_number)
